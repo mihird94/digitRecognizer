@@ -1,0 +1,374 @@
+---
+title: <span style="color:blue">IST 707 HW3- Naive Bayes,K-NN and SVM</span>
+author: <span style="color:blue">Mihir Deshpande</span>
+date: <span style="color:blue">March 31, 2019</span>
+fontsize: 12pt
+output: html_document
+---
+
+###THis HW assigments deals with predicting handwritten digits by building classifiers using Naive Bayes, K-Nearest Neighbor and Support Vector Machine algorithms. The dataset has class label from 0-9 and  feature set of pixel values for the handwritten digits. Our aim is to build a classifier using the pixel values to precict the label for the digit
+
+###Steps involves in the HW are:-
+
+1.Data Preprocessing:-
+
+-Removing variables with zero and near zero variance as they dont provided much information
+
+-Binarization of the variables are most of the values are either 0 or 255
+
+-Splitting into train and validation sets
+
+-Additional scaling and normazilation for K-nn method as it is distance based
+
+2.Modeling using naive bayes,K-NN and SVM
+
+3.Model Comparison(Use similar cross validation method to compare the models)
+
+#####I have used parallel processing to speed up the processing as some of these models with tunegrid and cross validation take a lot of time(in hours to process). I used doParallel package to do the same. Caret allows for parallel processing using the allowParallel argument.
+
+
+
+**Load required packages:-**
+
+```{r}
+library(caret)
+library(klaR)
+#install.packages('doParallel')
+library(doParallel)
+```
+
+
+###Preprocessing:-
+
+**Load the dataset**
+
+```{r}
+digit_train<-read.csv("Kaggle-digit-train-sample-small-1400.csv")
+digit_test<-read.csv("Kaggle-digit-test-sample1000.csv")
+
+```
+
+
+**Converting the label into factor:-**
+```{r}
+digit_train$label<-as.factor(digit_train$label)
+```
+```Convert to factor helps to convert the problem to a classification task. Naive Bayes algorithm requires factor values for the response variable```
+
+
+**Removing variables with zero and near zero variance:-**
+
+```{r}
+nearzv<-nearZeroVar(digit_train)
+digit_train<-digit_train[,-nearzv]
+digit_test<-digit_test[,-nearzv]
+```
+
+``` We have a lot of features that have 0 or near near varianace. They don't contribute much to the model and increase the complexity.We can get rid of these varibles using the 'nearZeroVar' function in caret```
+
+
+**Binarization:-**
+
+```{r}
+discretized_df<-as.data.frame(sapply(digit_train,function(x) ifelse(x<=100,0,1)))
+discretized_df$label<-digit_train$label
+digit_test<-as.data.frame(sapply(digit_test,function(x) ifelse(x<=100,0,1)))
+```
+
+```Since most of the values of the pixel variables are either 0 or 255, we can convert them into binary variables. I have chosen all the values below 100 to 0 and all the values above 100 to 1.```
+
+
+**Splitting the digit_train dataset into train and validation:-**
+
+```{r}
+set.seed(2)
+index<-createDataPartition(discretized_df$label,p=0.7,list=FALSE)
+train<-discretized_df[index,]
+validation<-discretized_df[-index,]
+
+```
+
+``` As the test dataset does not have any labels, we will split the dataset into test and validation to asses the model performance```
+
+
+####Function to calculate Accuracy:-
+
+```{r}
+Accuracy<-function(vec1,vec2){
+acc<-round(sum(vec1==vec2)/length(vec1),4)
+return(paste("Accuracy score is",acc))
+}
+```
+``` I wrote my own function to calculate accuracy as the caret confusionMatrix was printing a lot of irrelevant output```
+
+
+###Naive Bayes Model:-
+
+**Model Building using tune grid and 3 fold cv:-**
+
+```{r}
+
+t1<-Sys.time()
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+
+nb_model <- train(label ~ ., data = train, method = "nb",
+                   trControl = trainControl(method = "cv", number = 3),
+                   tuneGrid = expand.grid(fL = 1:3, usekernel = c(TRUE, FALSE), adjust = 1:3))
+t2<-Sys.time()
+stopCluster(cl)
+registerDoSEQ()
+```
+
+```Accuracy was used to select the optimal model using the largest value.The final values used for the model were fL = 1, usekernel = TRUE and adjust = 1.```
+
+
+**Time to build the model:-**
+
+```{r}
+print(t2-t1)
+```
+
+
+**Predictions on validation set:-**
+
+```{r}
+predict_nb <- predict(nb_model, newdata = validation, type = "raw")
+Accuracy(predict_nb,validation$label)
+
+```
+
+
+
+###K-NN Model:-
+
+**preprocessing:-**
+```{r}
+pre_process <- preProcess(train, method = c("scale", "center"))
+
+train1 <- predict(pre_process, newdata = train)
+validation1 <- predict(pre_process, newdata = validation)
+test1<-predict(pre_process,newdata=digit_test)
+
+```
+
+```K-nn is a distance based method, hence standardizaton is used to get all the variable on a similar scale```
+
+
+**Model building using tune grid and 3-fold cross-validation:-**
+
+```{r}
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+start_time_knn <- Sys.time()
+knn_model<-train(label~.,data = train1,method="knn",tuneGrid = data.frame(k = seq(1, 25)),
+                 trControl = trainControl(method = "cv",
+                                          number = 3))
+end_time_knn <- Sys.time()
+stopCluster(cl)
+registerDoSEQ()
+
+plot(knn_model)
+
+```
+
+**Model information**
+```{r}
+knn_model$finalModel
+```
+
+
+**Time to build the model:-**
+
+```{r}
+print(end_time_knn-start_time_knn)
+```
+
+```It takes approx 7 secs to build the knn-model```
+
+
+
+
+
+**Predictons on validaton set:-**
+
+```{r}
+t1<-Sys.time()
+knn_predictions<-predict(knn_model,newdata=validation1)
+t2<-Sys.time()
+Accuracy(knn_predictions,validation1$label)
+```
+
+**Time to predict using K-nn**
+
+```{r}
+print(t2-t1)
+```
+
+
+
+### SVM Model:-
+
+**Model building using tune grid and 3-fold cross-validation for linear SvM:-**
+
+```{r}
+
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+
+t1 <- Sys.time()
+svm_model_linear <- train(label ~ ., data = train,
+                   tuneGrid = expand.grid(C = seq(0, 1, 0.1)),
+                   method = "svmLinear",
+                   trControl = trainControl(method = "cv",
+                                            number = 3),allowParallel=TRUE)
+t2<-Sys.time()
+
+stopCluster(cl)
+registerDoSEQ()
+
+```
+
+```Accuracy was used to select the optimal model using the largest value.The final value used for the model was C = 0.1.```
+```Lower C allows small number of misclassifiaction with the goal of reducing variance```
+
+
+
+
+**Time to train the model using linearSVM:-**
+
+```{r}
+print(t2-t1)
+```
+
+
+
+**Predictions on validation dataset:-**
+
+```{r}
+svm_predictions<-predict(svm_model_linear,newdata =validation)
+Accuracy(svm_predictions,validation$label)
+```
+
+```SVMLinear has a validation accuracy of 0.8517 which is better compared to naive bayes classifier but little less than the K-nn clasisfier```
+
+**Model building using tune grid and 3-fold cross-validation for SvMRbf:-**
+
+```{r}
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+
+t1 <- Sys.time()
+svm_model_rbf <- train(label ~ ., data = train,
+                       tuneGrid = expand.grid(sigma = seq(0, 1, 0.1),
+                                              C = seq(0, 1, 0.1)),
+                       method = "svmRadial",
+                       trControl = trainControl(method = "cv",
+                                                number = 3),allowParallel=TRUE)
+t2<-Sys.time()
+
+stopCluster(cl)
+registerDoSEQ()
+
+```
+
+**Time to train the model using SVMRBF:-**
+
+```{r}
+print(t2-t1)
+```
+
+**Predictions on validation dataset:-**
+
+```{r}
+svmrbf_predictions<-predict(svm_model_rbf,newdata =validation)
+Accuracy(svmrbf_predictions,validation$label)
+```
+
+``` SVM with RBF kernel performs much poorly as compared to svmLinear as well as other algorithms. This demonstartes the effect of choice of kernel in the process of model building with SVM```
+
+
+
+####Model Comparison
+
+```{r}
+model_comparison <- resamples(list(SVMLinear = svm_model_linear,Knn=knn_model,NaiveBayes=nb_model))
+summary(model_comparison)
+```
+
+
+
+**Model comparison plot:-**
+
+```{r}
+scales <- list(x = list(relation = "free"),
+               y = list(relation = "free"))
+bwplot(model_comparison,scales=scales)
+```
+
+-Although SVMLinear model performs slightly better on the  cross-validation, K-NN model gives a much better performance on the validation set which was unseen. As evident on the boxplot, the SVMLinear model has larger range in accuracy(larger variance) as compared to the K-NN model which has less variance. Thus, it can be implied that the SVM model is overfitting this particular data. Therfore, K-NN model performs well on the unseen validation set.
+
+-Naive Bayes algorithm works on the assumption of independence of variables. When the assumption is violated, it might not perform well. This might be reason that Naive Bayes performance in this problem is poor if compared to K-nn and SVM.It is also seen that naive bayes model overfits the data as the variance in the cross validation accuracies is large for naive bayes as well.
+
+-K-NN has the least variance in terms of cross-validation accuracies and thus it can be implied that the model is stable for this problem. It does better than the other two models in terms of overfitting.
+
+
+-Time taken to train Naive bayes model ~ 2 mins
+-Time taken to train K-nn model ~ 7 secs
+-Time taken to train SVM-Linear model ~ 10 secs
+-Time taken to train SVM-RBF model~1.4 mins
+
+-Naive Bayes Model takes a lot of time as it has to calcualte the prior probabilities of all classes given the data
+-K-NN is a lazy learner the training process is fairly quick but takes longer to predict as most of the work is done during the predictions
+-SVMRbf is slower than svmLinear as it uses the kernel trick to project the data points in higher dimension and computes distances to obtain the separating hyperplane
+
+
+
+####Kaggle Submissions
+
+1. K-NN model
+
+- Got an accuracy score of 0.96242 which is better than the validation accuracy of the model using sample train dataset. This makes sense as we have more data to train the model.
+
+2. SVM model
+
+- Got an accuracy score of 0.77585
+
+3. Naive Bayes Model
+
+-Got an accuracy score of 0.45371
+
+
+-I have attached screenshots for the kaggle submissions 
+
+######Predictions on sample test
+
+```{r}
+test_pred<-predict(knn_model,test1)
+```
+
+**Write the results back to the sample test file**
+-Used KNN model for sample test predictions
+-I have attached the updated csv file for sample test prediction
+
+```Remove the label variable from test dataset```
+```{r}
+test1<-test1[,!names(test1) %in% c("label")]
+```
+
+```Since last row is NA we can remove it```
+
+```{r}
+test1<-na.omit(test1)
+```
+
+```{r}
+test1$label<-test_pred
+write.csv(test1,"predicted_sample_test.csv")
+```
+
+
+
+
+
+
